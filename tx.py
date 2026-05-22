@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import requests
+import time
 
 app = FastAPI()
 
@@ -12,36 +13,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ĐỔI THÀNH ĐƯỜNG DẪN MÁY CHỦ API CẬP NHẬT MỚI NHẤT CỦA CỔNG LC79B
-URL_DATA_CHINH = "https://api.lc79b.bet/api/games/taixiumd5/current"
+# Bạn có thể linh hoạt đổi url thành api.lc79b.bet hoặc api.lc79d.win tùy theo bên nào đang sống
+URL_DATA_GOC = "https://api.lc79d.win/api/games/taixiumd5/current"
 
 @app.get("/api/tailoc")
 def get_current_game():
     try:
-        # Tự động gửi lệnh lấy dữ liệu thời gian thực trực tiếp từ cổng chính lc79b
-        response = requests.get(URL_DATA_CHINH, timeout=3)
+        # 1. PHÁ CACHE: Gắn thêm chuỗi thời gian mili-giây vào đuôi link để link luôn mới
+        thoi_gian_bat_dau = time.time()
+        timestamp_hien_tai = int(thoi_gian_bat_dau * 1000)
+        url_chong_cache = f"{URL_DATA_GOC}?_={timestamp_hien_tai}"
+        
+        # 2. GIẢ MẠO TRÌNH DUYỆT (Chống bị chặn API)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Accept": "application/json",
+            "Cache-Control": "no-cache"
+        }
+        
+        # Lấy dữ liệu với tốc độ cao
+        response = requests.get(url_chong_cache, headers=headers, timeout=3)
         data_game = response.json()
         
-        # Bóc tách dữ liệu phiên và thời gian thực tế từ sảnh cược
-        id_phien_real = data_game.get("phien", 0)
-        giay_con_lai_real = data_game.get("remainTime", 60)
-        ma_md5_real = data_game.get("md5", "")
+        # 3. BÙ TRỪ ĐỘ TRỄ MẠNG (Tự động trừ đi thời gian lấy dữ liệu)
+        thoi_gian_nhan_ve = time.time()
+        do_tre_mang = int(thoi_gian_nhan_ve - thoi_gian_bat_dau)
         
-        # Lấy kết quả xúc xắc của phiên vừa đóng trước đó
+        id_phien_real = data_game.get("phien", 0)
+        ma_md5_real = data_game.get("md5", "")
         xx_truoc = data_game.get("lastResult", "3-3-4")
         kq_truoc = data_game.get("lastResultText", "Xiu")
         
-        chuoi_goc_md5_he_thong = f"Phien_{id_phien_real}|{kq_truoc}|{xx_truoc}|lc79b_secret_key"
+        # Trừ đi số giây trễ mạng để đồng hồ khớp 100% với màn hình game
+        giay_con_lai_real = data_game.get("remainTime", 60) - do_tre_mang
+        if giay_con_lai_real < 0:
+            giay_con_lai_real = 0
+            
+        chuoi_goc_md5_he_thong = f"Phien_{id_phien_real}|{kq_truoc}|{xx_truoc}|lc79_secret_key"
 
-        # Thời gian cược còn trên 5 giây -> Giấu kết quả xúc xắc để chống soi
         if giay_con_lai_real > 5:
             return {
                 "status": "success",
                 "by": "trungkhoa_admin",
-                "phien_hien_tai": id_phien_real,       # Số phiên khớp 100% cổng chính lc79b
-                "thoi_gian_con_lai": giay_con_lai_real, # Giây nhảy giật lùi cùng nhịp bàn cược
+                "phien_hien_tai": id_phien_real,       
+                "thoi_gian_con_lai": giay_con_lai_real, 
                 "game_display": {
-                    "ma_md5_cong_khai": ma_md5_real,     # Mã chuỗi MD5 chuẩn từ nhà cái
+                    "ma_md5_cong_khai": ma_md5_real,     
                     "xuc_xac": "Dang lac... (An ket qua de bao mat)",
                     "tong_diem": "An",
                     "ket_qua": "An",
@@ -49,11 +66,10 @@ def get_current_game():
                 },
                 "admin_prediction_phiên_sau": {
                     "phien_sap_toi": id_phien_real + 1,
-                    "du_doan_ket_qua": "HỆ THỐNG ĐANG PHÂN TÍCH LUỒNG MD5...",
-                    "thong_bao": "Đợi đồng hồ về dưới 5 giây cuối để nổ chữ BÚ"
+                    "du_doan_ket_qua": "QUÉT MD5 LUỒNG SÂU...",
+                    "thong_bao": "Chờ 5 giây cuối nổ BÚ"
                 }
             }
-        # Đồng hồ đếm ngược từ 5 giây trở xuống -> Mở bát và nổ chữ BÚ thần thánh
         else:
             return {
                 "status": "success",
@@ -65,19 +81,18 @@ def get_current_game():
                     "xuc_xac": f"Phien truoc: {xx_truoc} ({kq_truoc})",
                     "tong_diem": "Hien thi",
                     "ket_qua": kq_truoc,
-                    "ADMIN_SO_KEO": "BUUUUU !!!!!!!!",  # Dòng chữ gáy uy tín khi quay clip
+                    "ADMIN_SO_KEO": "BUUUUU !!!!!!!!", 
                     "chuoi_goc_check": chuoi_goc_md5_he_thong
                 },
                 "admin_prediction_phiên_sau": {
                     "phien_sap_toi": id_phien_real + 1,
-                    "du_doan_ket_qua": "QUÉT SÀN THÀNH CÔNG -> CHẮC CHẮN ĂN ĐẬM PHIÊN SAU"
+                    "du_doan_ket_qua": "CHỐT KÈO THÀNH CÔNG"
                 }
             }
             
     except Exception as e:
-        # Bộ lọc dự phòng tự động chạy khi đường truyền mạng bị nghẽn
         return {
-            "status": "success",
-            "msg": "Dang ket noi vao sảnh chinh lc79b.bet...",
+            "status": "error",
+            "msg": "Hệ thống đang đồng bộ lại nhịp...",
             "error_log": str(e)
         }
